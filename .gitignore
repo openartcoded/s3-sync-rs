@@ -1,2 +1,4 @@
 /target
 key.txt
+docker-compose.yml
+data/
