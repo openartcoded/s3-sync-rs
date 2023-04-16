@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
             match object_storage_class(&client, key, &bucket).await {
                 Some(storage_class) => {
-                    tracing::info!("file seems to exists, check storage class...");
+                    tracing::debug!("file seems to exists, check storage class...");
                     update_storage_class_to_glacier(&client, key, &storage_class, &bucket).await?;
                 }
                 None => {
@@ -156,7 +156,7 @@ async fn update_storage_class_to_glacier(
 ) -> Result<(), Box<dyn Error>> {
     match old_storage_class {
         StorageClass::DeepArchive | StorageClass::Glacier | StorageClass::GlacierIr => {
-            tracing::warn!("{key} already in glacier")
+            tracing::debug!("{key} already in glacier")
         }
         StorageClass::Standard
         | StorageClass::StandardIa
