@@ -70,12 +70,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tracing::info!("starting...");
 
-    let mut interval = time::interval(Duration::from_millis(interval_in_minutes * 60 * 1000));
-
     loop {
-        tracing::info!("wait till next tick...");
-        interval.tick().await;
-
         let mut dir = tokio::fs::read_dir(&directory).await?;
         let mut entries = vec![];
 
@@ -134,6 +129,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
+
+        tracing::info!("wait till next tick...");
+        tokio::time::sleep(Duration::from_secs(interval_in_minutes * 60)).await;
     }
 }
 
