@@ -14,7 +14,7 @@ use aws_sdk_s3::{
     types::{CompletedMultipartUpload, CompletedPart, ObjectStorageClass, StorageClass},
     Client,
 };
-use aws_smithy_http::byte_stream::Length;
+useaws_smithy_http::byte_stream::Length;
 use tokio::time;
 
 //In bytes, minimum chunk size of 5MB. Increase CHUNK_SIZE to send larger chunks.
@@ -82,6 +82,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
+        tracing::info!("wait till next tick...");
         interval.tick().await;
     }
 }
