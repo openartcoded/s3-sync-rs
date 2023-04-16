@@ -88,7 +88,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         let count_entries = entries.len() as i64;
         tracing::info!("{count_entries} entries in directory.");
-        let number_entries_to_glacier = count_entries - 1 - number_entry_to_keep_in_zone;
+        let number_entries_to_glacier = count_entries - number_entry_to_keep_in_zone;
         for (
             index,
             S3FileEntry {
