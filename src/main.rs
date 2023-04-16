@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         entries.sort_by(|s1, s2| s1.created.cmp(&s2.created));
         let count_entries = entries.len() as i64;
-        tracing::info!("{count_entries} in directory.");
+        tracing::info!("{count_entries} entries in directory.");
         let number_entries_to_glacier = count_entries - 1 - number_entry_to_keep_in_zone;
         for (
             index,
@@ -101,7 +101,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         ) in entries.into_iter().enumerate()
         {
             let index = index as i64;
-            tracing::info!("processing filename {key}");
+            tracing::info!(
+                "processing filename {}/{} with name {key}",
+                index + 1,
+                count_entries
+            );
             match object_storage_class(&client, &key, &bucket).await {
                 Some(storage_class) => {
                     tracing::debug!("file seems to exists, check storage class...");
@@ -267,7 +271,7 @@ async fn upload(
     }
     let mut upload_parts: Vec<CompletedPart> = vec![];
     for chunk_index in 0..chunk_count {
-        tracing::info!("processing part {chunk_index}/{chunk_count}...");
+        tracing::info!("processing part {}/{chunk_count}...", chunk_index + 1);
         let this_chunk = if chunk_count - 1 == chunk_index {
             size_of_last_chunk
         } else {
