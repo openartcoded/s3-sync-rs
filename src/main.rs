@@ -4,7 +4,7 @@ use std::{
     error::Error,
     fmt::Display,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use aws_sdk_s3::{
@@ -17,15 +17,21 @@ use aws_sdk_s3::{
 use aws_smithy_http::byte_stream::Length;
 use tokio::time;
 
-//In bytes, minimum chunk size of 5MB. Increase CHUNK_SIZE to send larger chunks.
-const CHUNK_SIZE: u64 = 1024 * 1024 * 5;
-const MAX_CHUNKS: u64 = 10000;
+struct S3FileEntry {
+    key: String,
+    path_buf: PathBuf,
+    created: SystemTime,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt::init();
 
     let bucket = var("S3_BUCKET").unwrap_or_else(|_| "artcoded".into());
+    let number_entry_to_keep_in_zone = var("S3_NUM_ENTRIES_TO_KEEP_IN_ZONE")
+        .ok()
+        .and_then(|tick| tick.parse::<i64>().ok())
+        .unwrap_or(1);
     let directory = var("S3_DIRECTORY").unwrap_or_else(|_| "/tmp/test".into());
     let endpoint = var("S3_ENDPOINT").unwrap_or_else(|_| "https://s3.fr-par.scw.cloud".into());
     let region = var("S3_REGION").unwrap_or_else(|_| "fr-par".into());
@@ -33,6 +39,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .ok()
         .and_then(|tick| tick.parse::<u64>().ok())
         .unwrap_or(1);
+    let chunk_size = var("S3_CHUNK_SIZE")
+        .ok()
+        .and_then(|tick| tick.parse::<u64>().ok())
+        .unwrap_or(1024 * 1024 * 5);
+    let max_chunks = var("S3_MAX_CHUNKS")
+        .ok()
+        .and_then(|tick| tick.parse::<u64>().ok())
+        .unwrap_or(1024);
 
     let directory = PathBuf::from(directory);
 
@@ -60,28 +74,59 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     loop {
         let mut dir = tokio::fs::read_dir(&directory).await?;
+        let mut entries = vec![];
+
         while let Ok(Some(entry)) = dir.next_entry().await {
             let key = entry.file_name();
             let key = key.to_str().ok_or("file name error")?;
+            let path_buf = entry.path();
+            let created = entry.metadata().await?.created()?;
+            entries.push(S3FileEntry {
+                key: key.to_string(),
+                path_buf,
+                created,
+            });
+        }
+        entries.sort_by(|s1, s2| s1.created.cmp(&s2.created));
+        let count_entries = entries.len() as i64;
+        tracing::info!("{count_entries} in directory.");
+        let number_entries_to_glacier = count_entries - 1 - number_entry_to_keep_in_zone;
+        for (
+            index,
+            S3FileEntry {
+                key,
+                path_buf,
+                created: _,
+            },
+        ) in entries.into_iter().enumerate()
+        {
+            let index = index as i64;
             tracing::info!("processing filename {key}");
-
-            match object_storage_class(&client, key, &bucket).await {
+            match object_storage_class(&client, &key, &bucket).await {
                 Some(storage_class) => {
                     tracing::debug!("file seems to exists, check storage class...");
-                    update_storage_class_to_glacier(&client, key, &storage_class, &bucket).await?;
+                    if number_entries_to_glacier > index {
+                        update_storage_class_to_glacier(&client, &key, &storage_class, &bucket)
+                            .await?;
+                    } else {
+                        tracing::info!("file exists but retention policy set to keep {number_entry_to_keep_in_zone} in zone ");
+                    }
                 }
                 None => {
                     tracing::info!("pushing new file to s3");
                     upload(
                         &client,
-                        entry.path().as_path(),
+                        path_buf.as_path(),
                         StorageClass::OnezoneIa,
+                        chunk_size,
+                        max_chunks,
                         &bucket,
                     )
                     .await?;
                 }
             }
         }
+
         tracing::info!("wait till next tick...");
         interval.tick().await;
     }
@@ -187,6 +232,8 @@ async fn upload(
     client: &Client,
     file_path: &Path,
     storage_class: StorageClass,
+    chunk_size: u64,
+    max_chunks: u64,
     bucket: &str,
 ) -> Result<(), Box<dyn Error>> {
     let file_size = tokio::fs::metadata(file_path).await?.len();
@@ -205,17 +252,17 @@ async fn upload(
     let upload_id = multipart_upload_res
         .upload_id()
         .ok_or("could not get upload id")?;
-    let mut chunk_count = (file_size / CHUNK_SIZE) + 1;
-    let mut size_of_last_chunk = file_size % CHUNK_SIZE;
+    let mut chunk_count = (file_size / chunk_size) + 1;
+    let mut size_of_last_chunk = file_size % chunk_size;
     if size_of_last_chunk == 0 {
-        size_of_last_chunk = CHUNK_SIZE;
+        size_of_last_chunk = chunk_size;
         chunk_count -= 1;
     }
 
     if file_size == 0 {
         return Err(Box::new(SyncError::BadFileSize));
     }
-    if chunk_count > MAX_CHUNKS {
+    if chunk_count > max_chunks {
         return Err(Box::new(SyncError::TooManyChunks));
     }
     let mut upload_parts: Vec<CompletedPart> = vec![];
@@ -224,11 +271,11 @@ async fn upload(
         let this_chunk = if chunk_count - 1 == chunk_index {
             size_of_last_chunk
         } else {
-            CHUNK_SIZE
+            chunk_size
         };
         let stream = ByteStream::read_from()
             .path(file_path)
-            .offset(chunk_index * CHUNK_SIZE)
+            .offset(chunk_index * chunk_size)
             .length(Length::Exact(this_chunk))
             .build()
             .await?;
