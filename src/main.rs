@@ -15,6 +15,8 @@ use aws_sdk_s3::{
     Client,
 };
 use aws_smithy_http::byte_stream::Length;
+use time::{macros::format_description, UtcOffset};
+use tracing_subscriber::fmt::time::OffsetTime;
 
 struct S3FileEntry {
     key: String,
@@ -24,8 +26,12 @@ struct S3FileEntry {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt::init();
-
+    let offset = UtcOffset::from_hms(2, 0, 0)?; // todo workaround for UTC+2
+    let timer = OffsetTime::new(
+        offset,
+        format_description!("[day]-[month]-[year] [hour]:[minute]:[second]"),
+    );
+    tracing_subscriber::fmt().with_timer(timer).init();
     let bucket = var("S3_BUCKET").unwrap_or_else(|_| "artcoded".into());
     let number_entry_to_keep_in_zone = var("S3_NUM_ENTRIES_TO_KEEP_IN_ZONE")
         .ok()
