@@ -70,9 +70,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     tracing::info!("starting...");
 
-    let mut interval = time::interval(Duration::from_secs(interval_in_minutes * 60));
+    let mut interval = time::interval(Duration::from_millis(interval_in_minutes * 60 * 1000));
 
     loop {
+        tracing::info!("wait till next tick...");
+        interval.tick().await;
+
         let mut dir = tokio::fs::read_dir(&directory).await?;
         let mut entries = vec![];
 
@@ -88,6 +91,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             });
         }
         entries.sort_by(|s1, s2| s1.created.cmp(&s2.created));
+
         let count_entries = entries.len() as i64;
         tracing::info!("{count_entries} entries in directory.");
         let number_entries_to_glacier = count_entries - 1 - number_entry_to_keep_in_zone;
@@ -130,9 +134,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
-
-        tracing::info!("wait till next tick...");
-        interval.tick().await;
     }
 }
 
@@ -221,8 +222,9 @@ async fn update_storage_class_to_glacier(
         StorageClass::OnezoneIa => {
             tracing::info!("set class to glacier");
             client
-                .put_object()
+                .copy_object()
                 .key(key)
+                .copy_source(format!("{bucket}/{key}"))
                 .storage_class(StorageClass::Glacier)
                 .bucket(bucket)
                 .send()
