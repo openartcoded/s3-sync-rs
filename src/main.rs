@@ -15,7 +15,6 @@ use aws_sdk_s3::{
     Client,
 };
 use aws_smithy_http::byte_stream::Length;
-use tokio::time;
 
 struct S3FileEntry {
     key: String,
