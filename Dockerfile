@@ -23,6 +23,15 @@ FROM debian:bullseye-slim AS runtime
 RUN apt  update && apt upgrade -y
 RUN apt install -y ca-certificates
 
+# Set timezone
+ENV CONTAINER_TIMEZONE 'Europe/Brussels'
+RUN apt-get update && apt-get install -y tzdata && \
+  rm /etc/localtime && \
+  ln -snf /usr/share/zoneinfo/$CONTAINER_TIMEZONE /etc/localtime &&  \
+  echo $CONTAINER_TIMEZONE > /etc/timezone && \
+  dpkg-reconfigure -f noninteractive tzdata && \
+  apt-get clean
+
 ENV RUST_LOG=info
 
 VOLUME /root/.local/share
