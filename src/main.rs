@@ -220,6 +220,7 @@ async fn upload(
     }
     let mut upload_parts: Vec<CompletedPart> = vec![];
     for chunk_index in 0..chunk_count {
+        tracing::info!("processing part {chunk_index}/{chunk_count}...");
         let this_chunk = if chunk_count - 1 == chunk_index {
             size_of_last_chunk
         } else {
