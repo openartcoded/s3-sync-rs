@@ -19,7 +19,9 @@ RUN rm ./target/release/deps/s3_sync_rs*
 
 RUN cargo build --release 
 
-FROM debian:11-slim
+FROM debian:bullseye-slim AS runtime
+RUN apt  update && apt upgrade -y
+RUN apt install -y ca-certificates
 
 ENV RUST_LOG=info
 
