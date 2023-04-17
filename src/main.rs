@@ -53,11 +53,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .and_then(|tick| tick.parse::<u64>().ok())
         .unwrap_or(1024);
 
-    let directory = PathBuf::from(directory);
+    let directory_path = PathBuf::from(&directory);
 
-    if !directory.exists() || !directory.is_dir() {
-        panic!("{directory:?} doesn't exist or is not a directory");
+    fn check_directory(directory: &str, directory_path: &Path) -> Result<(), Box<dyn Error>> {
+        if !directory_path.exists() || !directory_path.is_dir() {
+            return Err(Box::new(SyncError::InvalidDirectory(directory.to_string())));
+        }
+        Ok(())
     }
+
+    check_directory(&directory, &directory_path)?;
 
     let shared_config = aws_config::from_env().load().await;
     let config = aws_sdk_s3::config::Builder::from(&shared_config)
@@ -76,7 +81,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     tracing::info!("starting...");
 
     loop {
-        let mut dir = tokio::fs::read_dir(&directory).await?;
+        let mut dir = tokio::fs::read_dir(&directory_path).await?;
         let mut entries = vec![];
 
         while let Ok(Some(entry)) = dir.next_entry().await {
@@ -106,7 +111,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         {
             let index = index as i64;
             tracing::info!(
-                "processing filename {}/{} with name {key}",
+                "processing file {}/{} with name {key}",
                 index + 1,
                 count_entries
             );
@@ -197,7 +202,7 @@ async fn bucket_exists(client: &Client, bucket: &str) -> Result<(), Box<dyn Erro
         Ok(_) => Ok(()),
         Err(e) => {
             tracing::debug!("bucket exists err {e:?}");
-            Err(Box::new(SyncError::BucketDoesNotExist))
+            Err(Box::new(SyncError::BucketDoesNotExist(bucket.into())))
         }
     }
 }
@@ -214,8 +219,8 @@ async fn update_storage_class_to_glacier(
         StorageClass::Standard
         | StorageClass::StandardIa
         | StorageClass::Outposts
-        | StorageClass::IntelligentTiering => todo!(),
-        StorageClass::ReducedRedundancy => {
+        | StorageClass::IntelligentTiering
+        | StorageClass::ReducedRedundancy => {
             tracing::warn!("storage class not expected for {key}: {old_storage_class:?}")
         }
         StorageClass::Unknown(s) => {
@@ -323,14 +328,18 @@ async fn upload(
 enum SyncError {
     BadFileSize,
     TooManyChunks,
-    BucketDoesNotExist,
+    BucketDoesNotExist(String),
+    InvalidDirectory(String),
 }
 impl Display for SyncError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BadFileSize => write!(f, "bad file size"),
             Self::TooManyChunks => write!(f, "too many chunks"),
-            Self::BucketDoesNotExist => write!(f, "bucketdoes not exist!"),
+            Self::BucketDoesNotExist(b) => write!(f, "bucket {b} does not exist!"),
+            Self::InvalidDirectory(directory) => {
+                write!(f, "{directory} doesn't exist or is not a directory")
+            }
         }
     }
 }
