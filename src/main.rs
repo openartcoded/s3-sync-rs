@@ -4,6 +4,7 @@ use std::{
     error::Error,
     fmt::Display,
     path::{Path, PathBuf},
+    str::FromStr,
     time::{Duration, SystemTime},
 };
 
@@ -15,6 +16,8 @@ use aws_sdk_s3::{
     Client,
 };
 use aws_smithy_http::byte_stream::Length;
+use chrono::Local;
+use cron::Schedule;
 use time::{macros::format_description, UtcOffset};
 use tracing_subscriber::fmt::time::OffsetTime;
 
@@ -23,7 +26,15 @@ struct S3FileEntry {
     path_buf: PathBuf,
     created: SystemTime,
 }
-
+#[derive(Debug)]
+struct S3Config {
+    cron_expression: String,
+    bucket: String,
+    chunk_size: u64,
+    max_chunks: u64,
+    number_entry_to_keep_in_zone: i64,
+    directory_path: PathBuf,
+}
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let offset = UtcOffset::from_hms(2, 0, 0)?; // todo workaround for UTC+2
@@ -40,10 +51,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let directory = var("S3_DIRECTORY").unwrap_or_else(|_| "/tmp/test".into());
     let endpoint = var("S3_ENDPOINT").unwrap_or_else(|_| "https://s3.fr-par.scw.cloud".into());
     let region = var("S3_REGION").unwrap_or_else(|_| "fr-par".into());
-    let interval_in_minutes = var("S3_INTERVAL_IN_MINUTES")
-        .ok()
-        .and_then(|tick| tick.parse::<u64>().ok())
-        .unwrap_or(1);
+    let cron_expression = var("S3_CRON_EXPRESSION").unwrap_or_else(|_| "0 0 4 * * * *".into());
     let chunk_size = var("S3_CHUNK_SIZE")
         .ok()
         .and_then(|tick| tick.parse::<u64>().ok())
@@ -77,11 +85,35 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if let error @ Err(_) = bucket_exists(&client, &bucket).await {
         return error;
     }
+    let s3_config = S3Config {
+        cron_expression,
+        chunk_size,
+        max_chunks,
+        number_entry_to_keep_in_zone,
+        directory_path,
+        bucket,
+    };
 
     tracing::info!("starting...");
+    run(&client, &s3_config).await?;
+    Ok(())
+}
 
+async fn run(client: &Client, config: &S3Config) -> Result<(), Box<dyn Error>> {
+    let schedule = Schedule::from_str(&config.cron_expression)?;
+    let mut schedule_it = schedule.upcoming(chrono::Local);
+    let mut next = schedule_it.next().ok_or("schedule error")?;
+    tracing::info!("started!");
     loop {
-        let mut dir = tokio::fs::read_dir(&directory_path).await?;
+        tracing::info!("next schedule {next}");
+        let now = Local::now();
+        if now < next {
+            let duration = next - now;
+            tracing::info!("wait {} seconds before next run...", duration.num_seconds());
+            tokio::time::sleep(Duration::from_millis(duration.num_milliseconds() as u64)).await;
+        }
+        tracing::info!("running...");
+        let mut dir = tokio::fs::read_dir(&config.directory_path).await?;
         let mut entries = vec![];
 
         while let Ok(Some(entry)) = dir.next_entry().await {
@@ -99,7 +131,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         let count_entries = entries.len() as i64;
         tracing::info!("{count_entries} entries in directory.");
-        let number_entries_to_glacier = count_entries - number_entry_to_keep_in_zone;
+        let number_entries_to_glacier = count_entries - config.number_entry_to_keep_in_zone;
         for (
             index,
             S3FileEntry {
@@ -115,14 +147,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 index + 1,
                 count_entries
             );
-            match object_storage_class(&client, &key, &bucket).await {
+            match object_storage_class(&client, &key, &config.bucket).await {
                 Some(storage_class) => {
                     tracing::debug!("file seems to exists, check storage class...");
-                    if number_entries_to_glacier > index {
-                        update_storage_class_to_glacier(&client, &key, &storage_class, &bucket)
-                            .await?;
+                    if config.number_entry_to_keep_in_zone < 0 {
+                        tracing::info!("retention policy set to keep all archives out of glacier.");
+                    } else if number_entries_to_glacier > index {
+                        update_storage_class_to_glacier(
+                            &client,
+                            &key,
+                            &storage_class,
+                            &config.bucket,
+                        )
+                        .await?;
                     } else {
-                        tracing::info!("file exists but retention policy set to keep {number_entry_to_keep_in_zone} in zone ");
+                        tracing::info!(
+                            "file exists but retention policy set to keep {} in zone ",
+                            config.number_entry_to_keep_in_zone
+                        );
                     }
                 }
                 None => {
@@ -131,17 +173,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         &client,
                         path_buf.as_path(),
                         StorageClass::OnezoneIa,
-                        chunk_size,
-                        max_chunks,
-                        &bucket,
+                        config.chunk_size,
+                        config.max_chunks,
+                        &config.bucket,
                     )
                     .await?;
                 }
             }
         }
-
-        tracing::info!("wait till next tick...");
-        tokio::time::sleep(Duration::from_secs(interval_in_minutes * 60)).await;
+        next = schedule_it.next().ok_or("could not get next schedule")?;
     }
 }
 
