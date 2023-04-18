@@ -157,14 +157,14 @@ async fn run(client: &Client, config: &S3Config) -> Result<(), Box<dyn Error>> {
                 index + 1,
                 count_entries
             );
-            match object_storage_class(&client, &key, &config.bucket).await {
+            match object_storage_class(client, &key, &config.bucket).await {
                 Some(storage_class) => {
                     tracing::debug!("file seems to exists, check storage class...");
                     if config.number_entry_to_keep_in_zone < 0 {
                         tracing::info!("retention policy set to keep all archives out of glacier.");
                     } else if number_entries_to_glacier > index {
                         update_storage_class_to_glacier(
-                            &client,
+                            client,
                             &key,
                             &storage_class,
                             &config.bucket,
@@ -180,7 +180,7 @@ async fn run(client: &Client, config: &S3Config) -> Result<(), Box<dyn Error>> {
                 None => {
                     tracing::info!("pushing new file to s3");
                     upload(
-                        &client,
+                        client,
                         path_buf.as_path(),
                         StorageClass::OnezoneIa,
                         config.chunk_size,
