@@ -108,15 +108,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 async fn run(client: &Client, config: &S3Config) -> Result<(), Box<dyn Error>> {
     let schedule = Schedule::from_str(&config.cron_expression)?;
-    let mut schedule_it = schedule.upcoming(chrono::Local);
-    let mut next = schedule_it.next().ok_or("schedule error")?;
     tracing::info!("started!");
-    loop {
+    for next in schedule.upcoming(chrono::Local) {
         tracing::info!("next schedule {next}");
         let now = Local::now();
         if now < next {
             let duration = next - now;
-            tracing::info!("wait {} seconds before next run...", duration.num_seconds());
+            tracing::info!(
+                "waiting {} hour(s) {} minute(s) {} second(s) before next run...",
+                duration.num_hours(),
+                duration.num_minutes() % 60,
+                duration.num_seconds() % 3600 % 60
+            );
             tokio::time::sleep(Duration::from_millis(duration.num_milliseconds() as u64)).await;
         }
         tracing::info!("running...");
@@ -188,8 +191,8 @@ async fn run(client: &Client, config: &S3Config) -> Result<(), Box<dyn Error>> {
                 }
             }
         }
-        next = schedule_it.next().ok_or("could not get next schedule")?;
     }
+    Ok(())
 }
 
 // functions
