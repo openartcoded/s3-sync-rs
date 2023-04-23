@@ -1166,7 +1166,7 @@ checksum = "f91339c0467de62360649f8d3e185ca8de4224ff281f66000de5eb2a77a79041"
 
 [[package]]
 name = "s3-sync-rs"
-version = "2023.0.1"
+version = "2023.1.0"
 dependencies = [
  "aws-config",
  "aws-sdk-s3",
