@@ -5,7 +5,6 @@ use std::{
     fmt::Display,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -79,7 +78,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .region(Region::new(region))
         .build();
 
-    let client = Arc::new(aws_sdk_s3::Client::from_conf(config));
+    let client = aws_sdk_s3::Client::from_conf(config);
 
     let mut tasks = JoinSet::new();
     tracing::info!("initiating {} tasks...", configs.len());
