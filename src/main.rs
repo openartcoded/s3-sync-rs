@@ -5,6 +5,7 @@ use std::{
     fmt::Display,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -18,7 +19,9 @@ use aws_sdk_s3::{
 use aws_smithy_http::byte_stream::Length;
 use chrono::Local;
 use cron::Schedule;
+use serde::Deserialize;
 use time::{macros::format_description, UtcOffset};
+use tokio::task::JoinSet;
 use tracing_subscriber::fmt::time::OffsetTime;
 
 struct S3FileEntry {
@@ -26,8 +29,9 @@ struct S3FileEntry {
     path_buf: PathBuf,
     created: SystemTime,
 }
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 struct S3Config {
+    title: String,
     cron_expression: String,
     bucket: String,
     chunk_size: u64,
@@ -50,34 +54,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
         format_description!("[day]-[month]-[year] [hour]:[minute]:[second]"),
     );
     tracing_subscriber::fmt().with_timer(timer).init();
-    let bucket = var("S3_BUCKET").unwrap_or_else(|_| "artcoded".into());
-    let number_entry_to_keep_in_zone = var("S3_NUM_ENTRIES_TO_KEEP_IN_ZONE")
-        .ok()
-        .and_then(|tick| tick.parse::<i64>().ok())
-        .unwrap_or(1);
-    let directory = var("S3_DIRECTORY").unwrap_or_else(|_| "/tmp/test".into());
+
+    let config_file = PathBuf::from_str(
+        &var("S3_CONFIG_FILE_PATH").unwrap_or_else(|_| "/var/config/configs.json".into()),
+    )?;
+
+    let configs: Vec<S3Config> = serde_json::from_str(&std::fs::read_to_string(config_file)?)?;
+
     let endpoint = var("S3_ENDPOINT").unwrap_or_else(|_| "https://s3.fr-par.scw.cloud".into());
     let region = var("S3_REGION").unwrap_or_else(|_| "fr-par".into());
-    let cron_expression = var("S3_CRON_EXPRESSION").unwrap_or_else(|_| "0 0 4 * * * *".into());
-    let chunk_size = var("S3_CHUNK_SIZE")
-        .ok()
-        .and_then(|tick| tick.parse::<u64>().ok())
-        .unwrap_or(1024 * 1024 * 5);
-    let max_chunks = var("S3_MAX_CHUNKS")
-        .ok()
-        .and_then(|tick| tick.parse::<u64>().ok())
-        .unwrap_or(1024);
 
-    let directory_path = PathBuf::from(&directory);
-
-    fn check_directory(directory: &str, directory_path: &Path) -> Result<(), Box<dyn Error>> {
+    fn check_directory(directory_path: &Path) -> Result<(), Box<dyn Error>> {
         if !directory_path.exists() || !directory_path.is_dir() {
-            return Err(Box::new(SyncError::InvalidDirectory(directory.to_string())));
+            return Err(Box::new(SyncError::InvalidDirectory(
+                directory_path.to_string_lossy().to_string(),
+            )));
         }
         Ok(())
     }
-
-    check_directory(&directory, &directory_path)?;
 
     let shared_config = aws_config::from_env().load().await;
     let config = aws_sdk_s3::config::Builder::from(&shared_config)
@@ -85,32 +79,52 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .region(Region::new(region))
         .build();
 
-    let client = aws_sdk_s3::Client::from_conf(config);
+    let client = Arc::new(aws_sdk_s3::Client::from_conf(config));
 
-    tracing::info!("check if bucket exists...");
+    let mut tasks = JoinSet::new();
+    tracing::info!("initiating {} tasks...", configs.len());
+    for config in configs {
+        tracing::info!("check if directory {:?} exists...", config.directory_path);
+        check_directory(&config.directory_path)?;
+        tracing::info!("check if bucket {} exists...", config.bucket);
 
-    if let error @ Err(_) = bucket_exists(&client, &bucket).await {
-        return error;
+        let client = client.clone();
+        if let error @ Err(_) = bucket_exists(&client, &config.bucket).await {
+            return error;
+        }
+        tasks.spawn(async move {
+            run(&client, &config)
+                .await
+                .map_err(|e| S3SyncError(e.to_string()))?;
+            Ok(()) as Result<(), S3SyncError>
+        });
     }
-    let s3_config = S3Config {
-        cron_expression,
-        chunk_size,
-        max_chunks,
-        number_entry_to_keep_in_zone,
-        directory_path,
-        bucket,
-    };
 
     tracing::info!("starting...");
-    run(&client, &s3_config).await?;
+    while let Some(res) = tasks.join_next().await {
+        match res {
+            Ok(Ok(_)) => {}
+            e => {
+                tracing::error!("join error {e:?}");
+            }
+        }
+    }
     Ok(())
 }
+#[derive(Debug)]
+struct S3SyncError(String);
+impl Display for S3SyncError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "s3 sync error: {}", self.0)
+    }
+}
+impl Error for S3SyncError {}
 
 async fn run(client: &Client, config: &S3Config) -> Result<(), Box<dyn Error>> {
     let schedule = Schedule::from_str(&config.cron_expression)?;
-    tracing::info!("started!");
+    tracing::info!("running task with title '{}'", config.title);
     for next in schedule.upcoming(chrono::Local) {
-        tracing::info!("next schedule {next}");
+        tracing::info!("next schedule for '{}': {next}", config.title);
         let now = Local::now();
         if now < next {
             let duration = next - now;
@@ -140,7 +154,10 @@ async fn run(client: &Client, config: &S3Config) -> Result<(), Box<dyn Error>> {
         entries.sort_by(|s1, s2| s1.created.cmp(&s2.created));
 
         let count_entries = entries.len() as i64;
-        tracing::info!("{count_entries} entries in directory.");
+        tracing::info!(
+            "{count_entries} entries in {:?} directory.",
+            config.directory_path
+        );
         let number_entries_to_glacier = count_entries - config.number_entry_to_keep_in_zone;
         for (
             index,

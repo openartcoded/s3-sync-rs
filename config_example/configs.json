@@ -1,0 +1,29 @@
+[
+ {
+  "title": "full dump of the database with files included",
+  "cron_expression": "*/5 * * * * * *",
+  "bucket": "s3-dump",
+  "chunk_size": 5242880,
+  "max_chunks": 1024,
+  "number_entry_to_keep_in_zone": 2,
+  "directory_path": "/var/s3/dump"
+ },
+ {
+  "title": "dump snapshots of the database",
+  "cron_expression": "*/5 * * * * * *",
+  "bucket": "s3-dump-snapshots",
+  "chunk_size": 5242880,
+  "max_chunks": 1024,
+  "number_entry_to_keep_in_zone": 2,
+  "directory_path": "/var/s3/dump-snapshot"
+ },
+ {
+  "title": "save new files",
+  "cron_expression": "*/5 * * * * * *",
+  "bucket": "s3-files",
+  "chunk_size": 5242880,
+  "max_chunks": 1024,
+  "number_entry_to_keep_in_zone": 2,
+  "directory_path": "/var/s3/files"
+ }
+]
