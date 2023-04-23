@@ -84,6 +84,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut tasks = JoinSet::new();
     tracing::info!("initiating {} tasks...", configs.len());
     for config in configs {
+        tracing::info!("check cron expression... {}", config.cron_expression);
+        let _ = Schedule::from_str(&config.cron_expression)?;
         tracing::info!("check if directory {:?} exists...", config.directory_path);
         check_directory(&config.directory_path)?;
         tracing::info!("check if bucket {} exists...", config.bucket);
@@ -95,8 +97,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         tasks.spawn(async move {
             run(&client, &config)
                 .await
-                .map_err(|e| S3SyncError(e.to_string()))?;
-            Ok(()) as Result<(), S3SyncError>
+                .map_err(|e| SyncError::TaskError(e.to_string()))?;
+            Ok(()) as Result<(), SyncError>
         });
     }
 
@@ -111,14 +113,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     Ok(())
 }
-#[derive(Debug)]
-struct S3SyncError(String);
-impl Display for S3SyncError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "s3 sync error: {}", self.0)
-    }
-}
-impl Error for S3SyncError {}
 
 async fn run(client: &Client, config: &S3Config) -> Result<(), Box<dyn Error>> {
     let schedule = Schedule::from_str(&config.cron_expression)?;
@@ -397,6 +391,7 @@ enum SyncError {
     TooManyChunks,
     BucketDoesNotExist(String),
     InvalidDirectory(String),
+    TaskError(String),
 }
 impl Display for SyncError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -407,6 +402,7 @@ impl Display for SyncError {
             Self::InvalidDirectory(directory) => {
                 write!(f, "{directory} doesn't exist or is not a directory")
             }
+            Self::TaskError(e) => write!(f, "task error {e}"),
         }
     }
 }
