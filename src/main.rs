@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+mod mqtt_client;
 use std::{
     env::var,
     error::Error,
@@ -18,10 +19,31 @@ use aws_sdk_s3::{
 use aws_smithy_http::byte_stream::Length;
 use chrono::Local;
 use cron::Schedule;
-use serde::Deserialize;
+use paho_mqtt::{AsyncClient, Message, QOS_1};
+use serde::{Deserialize, Serialize};
 use time::{macros::format_description, UtcOffset};
 use tokio::task::JoinSet;
 use tracing_subscriber::fmt::time::OffsetTime;
+
+use crate::mqtt_client::{MQTT_ENABLED, TOPIC_PUBLISHING};
+
+lazy_static::lazy_static! {
+   static ref S3_CONFIG_FILE: PathBuf = PathBuf::from_str(
+        &var("S3_CONFIG_FILE_PATH").unwrap_or_else(|_| "/var/config/configs.json".into()),
+    ).expect("S3_CONFIG_FILE_PATH not found");
+
+    static ref S3_ENDPOINT: String = var("S3_ENDPOINT").unwrap_or_else(|_| "https://s3.fr-par.scw.cloud".into());
+    static ref S3_REGION: String  = var("S3_REGION").unwrap_or_else(|_| "fr-par".into());
+
+    static ref PHONE_NUMBER: Option<String> =  var("PHONE_NUMBER").ok();
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Sms {
+    phone_number: String,
+    message: String,
+}
 
 struct S3FileEntry {
     key: String,
@@ -54,14 +76,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
     tracing_subscriber::fmt().with_timer(timer).init();
 
-    let config_file = PathBuf::from_str(
-        &var("S3_CONFIG_FILE_PATH").unwrap_or_else(|_| "/var/config/configs.json".into()),
-    )?;
-
-    let configs: Vec<S3Config> = serde_json::from_str(&std::fs::read_to_string(config_file)?)?;
-
-    let endpoint = var("S3_ENDPOINT").unwrap_or_else(|_| "https://s3.fr-par.scw.cloud".into());
-    let region = var("S3_REGION").unwrap_or_else(|_| "fr-par".into());
+    let configs: Vec<S3Config> =
+        serde_json::from_str(&std::fs::read_to_string(S3_CONFIG_FILE.clone())?)?;
 
     fn check_directory(directory_path: &Path) -> Result<(), Box<dyn Error>> {
         if !directory_path.exists() || !directory_path.is_dir() {
@@ -74,11 +90,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let shared_config = aws_config::from_env().load().await;
     let config = aws_sdk_s3::config::Builder::from(&shared_config)
-        .endpoint_url(endpoint)
-        .region(Region::new(region))
+        .endpoint_url(S3_ENDPOINT.clone())
+        .region(Region::new(S3_REGION.clone()))
         .build();
 
     let client = aws_sdk_s3::Client::from_conf(config);
+
+    let mq_client = if *MQTT_ENABLED {
+        let cli = mqtt_client::Client::new(Default::default())?;
+        let cli = cli
+            .connect(|_, _| tracing::info!("connected to mqtt!"))
+            .await?;
+        Some(cli)
+    } else {
+        None
+    };
 
     let mut tasks = JoinSet::new();
     tracing::info!("initiating {} tasks...", configs.len());
@@ -89,12 +115,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         check_directory(&config.directory_path)?;
         tracing::info!("check if bucket {} exists...", config.bucket);
 
+        let mq_client = mq_client.clone();
         let client = client.clone();
         if let error @ Err(_) = bucket_exists(&client, &config.bucket).await {
             return error;
         }
         tasks.spawn(async move {
-            run(&client, &config)
+            run(&client, &config, &mq_client)
                 .await
                 .map_err(|e| SyncError::TaskError(e.to_string()))?;
             Ok(()) as Result<(), SyncError>
@@ -110,15 +137,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
+
+    if let Some(mq_cli) = mq_client {
+        mq_cli.disconnect(None).await?;
+    }
+
     Ok(())
 }
 
-async fn run(client: &Client, config: &S3Config) -> Result<(), Box<dyn Error>> {
+async fn run(
+    client: &Client,
+    config: &S3Config,
+    mq_cli: &Option<AsyncClient>,
+) -> Result<(), Box<dyn Error>> {
     let schedule = Schedule::from_str(&config.cron_expression)?;
     tracing::info!("running task with title '{}'", config.title);
+    let mut now;
     for next in schedule.upcoming(chrono::Local) {
+        now = Local::now();
+
         tracing::info!("next schedule for '{}': {next}", config.title);
-        let now = Local::now();
         if now < next {
             let duration = next - now;
             tracing::info!(
@@ -167,6 +205,7 @@ async fn run(client: &Client, config: &S3Config) -> Result<(), Box<dyn Error>> {
                 index + 1,
                 count_entries
             );
+
             match object_storage_class(client, &key, &config.bucket).await {
                 Some(storage_class) => {
                     tracing::debug!("file seems to exists, check storage class...");
@@ -201,7 +240,23 @@ async fn run(client: &Client, config: &S3Config) -> Result<(), Box<dyn Error>> {
                 }
             }
         }
+        if let (Some(mq_cli), Some(phone_number)) = (mq_cli, PHONE_NUMBER.clone()) {
+            mq_cli
+                .publish(Message::new(
+                    TOPIC_PUBLISHING.clone(),
+                    serde_json::to_vec(&Sms {
+                        message: format!(
+                            "s3 sync: job {} ran successfully at {}",
+                            config.title, next
+                        ),
+                        phone_number,
+                    })?,
+                    QOS_1,
+                ))
+                .await?;
+        }
     }
+
     Ok(())
 }
 
