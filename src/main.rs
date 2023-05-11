@@ -107,7 +107,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let mut tasks = JoinSet::new();
-    tracing::info!("initiating {} tasks...", configs.len());
+    tracing::info!("initialize {} tasks...", configs.len());
     for config in configs {
         tracing::info!("check cron expression... {}", config.cron_expression);
         let _ = Schedule::from_str(&config.cron_expression)?;
@@ -241,12 +241,13 @@ async fn run(
             }
         }
         if let (Some(mq_cli), Some(phone_number)) = (mq_cli, PHONE_NUMBER.clone()) {
+            tracing::info!("send sms for job {}", config.title);
             mq_cli
                 .publish(Message::new(
                     TOPIC_PUBLISHING.clone(),
                     serde_json::to_vec(&Sms {
                         message: format!(
-                            "s3 sync: job {} ran successfully at {}",
+                            "s3 sync: job '{}' ran successfully at {}",
                             config.title, next
                         ),
                         phone_number,
