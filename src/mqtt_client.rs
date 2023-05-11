@@ -6,9 +6,9 @@ use paho_mqtt::{
 use tracing::{debug, error, info};
 
 lazy_static::lazy_static! {
-    pub static ref  MQTT_ENABLED : bool= {env::var("MQTT_ENABLED")
-        .unwrap_or_else(|_| "false".into())
-        .parse::<bool>().unwrap_or_else(|_|false)};
+    pub static ref  MQTT_ENABLED : bool= env::var("MQTT_ENABLED").ok()
+        .and_then(|v: String| v.parse::<bool>().ok())
+        .unwrap_or(false);
     pub static ref TOPIC_PUBLISHING: String = {
         env::var("MQTT_TOPIC_PUBLISHING").unwrap_or_else(|_| "sms".into())
     };
