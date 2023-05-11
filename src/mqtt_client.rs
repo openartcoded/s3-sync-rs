@@ -100,8 +100,8 @@ impl Client {
         let conn_opts = ConnectOptionsBuilder::new()
             .keep_alive_interval(Duration::from_secs(20))
             .clean_session(true)
-            .password(username.clone())
-            .user_name(password.clone())
+            .user_name(username.clone())
+            .password(password.clone())
             .will_message(lwt)
             .finalize();
         info!("Connecting to the MQTT server...");
