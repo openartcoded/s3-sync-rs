@@ -153,6 +153,7 @@ async fn run(
     let schedule = Schedule::from_str(&config.cron_expression)?;
     tracing::info!("running task with title '{}'", config.title);
     let mut now;
+    let mut entries = vec![];
     for next in schedule.upcoming(chrono::Local) {
         now = Local::now();
 
@@ -169,7 +170,6 @@ async fn run(
         }
         tracing::info!("running...");
         let mut dir = tokio::fs::read_dir(&config.directory_path).await?;
-        let mut entries = vec![];
 
         while let Ok(Some(entry)) = dir.next_entry().await {
             let key = entry.file_name();
@@ -197,7 +197,7 @@ async fn run(
                 path_buf,
                 created: _,
             },
-        ) in entries.into_iter().enumerate()
+        ) in entries.drain(..).enumerate()
         {
             let index = index as i64;
             tracing::info!(
