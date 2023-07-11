@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 mod mqtt_client;
 use std::{
     env::var,
@@ -23,6 +22,7 @@ use paho_mqtt::{AsyncClient, Message, QOS_1};
 use serde::{Deserialize, Serialize};
 use time::{macros::format_description, UtcOffset};
 use tokio::task::JoinSet;
+use tracing::{error, info};
 use tracing_subscriber::fmt::time::OffsetTime;
 
 use crate::mqtt_client::{MQTT_ENABLED, TOPIC_PUBLISHING};
@@ -242,19 +242,35 @@ async fn run(
         }
         if let (Some(mq_cli), Some(phone_number)) = (mq_cli, PHONE_NUMBER.clone()) {
             tracing::info!("send sms for job {}", config.title);
-            mq_cli
-                .publish(Message::new(
-                    TOPIC_PUBLISHING.clone(),
-                    serde_json::to_vec(&Sms {
-                        message: format!(
-                            "s3 sync: job '{}' ran successfully at {}",
-                            config.title, next
-                        ),
-                        phone_number,
-                    })?,
-                    QOS_1,
-                ))
-                .await?;
+            let mut is_err = false;
+            if !mq_cli.is_connected() {
+                match mq_cli.reconnect().await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("could not reconnect to mqtt broker...{e}");
+                        is_err = true;
+                    }
+                }
+            }
+            if !is_err {
+                match mq_cli
+                    .publish(Message::new(
+                        TOPIC_PUBLISHING.clone(),
+                        serde_json::to_vec(&Sms {
+                            message: format!(
+                                "s3 sync: job '{}' ran successfully at {}",
+                                config.title, next
+                            ),
+                            phone_number,
+                        })?,
+                        QOS_1,
+                    ))
+                    .await
+                {
+                    Ok(_) => info!("sms sent"),
+                    Err(e) => error!("could not send sms... {e}"),
+                }
+            }
         }
     }
 
@@ -263,8 +279,8 @@ async fn run(
 
 // functions
 
-type S3Object = (String, ObjectStorageClass);
-async fn list_objects(client: &Client, bucket: &str) -> Result<Vec<S3Object>, Box<dyn Error>> {
+type _S3Object = (String, ObjectStorageClass);
+async fn _list_objects(client: &Client, bucket: &str) -> Result<Vec<_S3Object>, Box<dyn Error>> {
     let resp = client.list_objects().bucket(bucket).send().await?;
     let mut objects = vec![];
     for object in resp.contents().unwrap_or_default() {
@@ -300,7 +316,7 @@ async fn object_storage_class(
         }
     }
 }
-async fn delete_object(
+async fn _delete_object(
     client: &Client,
     file_name: &str,
     bucket: &str,

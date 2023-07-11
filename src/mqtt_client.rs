@@ -86,7 +86,11 @@ impl Client {
             sleep_before_reconnect(rc);
             cli.reconnect_with_callbacks(connection_callback, on_failure);
         };
-
+        self.cli
+            .set_disconnected_callback(move |cli: &AsyncClient, _, _| {
+                sleep_before_reconnect(1000);
+                cli.reconnect_with_callbacks(connection_callback, on_failure);
+            });
         self.cli
             .set_connection_lost_callback(move |cli: &AsyncClient| {
                 cli.reconnect_with_callbacks(connection_callback, on_connection_failure);
@@ -111,7 +115,7 @@ impl Client {
                              // the inner cli
     }
 
-    pub fn on_message<F>(&self, cb: F)
+    pub fn _on_message<F>(&self, cb: F)
     where
         F: FnMut(&AsyncClient, Option<Message>) + 'static + Send,
     {
