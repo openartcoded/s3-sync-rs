@@ -21,7 +21,7 @@ RUN rm ./target/release/deps/s3_sync_rs*
 
 RUN cargo build --release 
 
-FROM debian:bullseye-slim AS runtime
+FROM debian:bookworm-slim AS runtime
 RUN apt  update && apt upgrade -y
 RUN apt install -y ca-certificates 
 
