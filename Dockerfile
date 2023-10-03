@@ -1,5 +1,5 @@
 
-FROM rust:1.70 as builder
+FROM rust:1.72.1 as builder
 
 RUN apt update &&  apt upgrade -y && apt install -y libssl-dev build-essential cmake
 

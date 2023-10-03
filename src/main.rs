@@ -156,6 +156,8 @@ async fn run(
     let mut entries = vec![];
     for next in schedule.upcoming(chrono::Local) {
         now = Local::now();
+        let mut count_update_class = 0;
+        let mut count_pushed_files = 0;
 
         tracing::info!("next schedule for '{}': {next}", config.title);
         if now < next {
@@ -219,6 +221,7 @@ async fn run(
                             &config.bucket,
                         )
                         .await?;
+                        count_update_class += 1;
                     } else {
                         tracing::info!(
                             "file exists but retention policy set to keep {} in zone ",
@@ -237,8 +240,14 @@ async fn run(
                         &config.bucket,
                     )
                     .await?;
+                    count_pushed_files += 1;
                 }
             }
+        }
+
+        if count_pushed_files == 0 && count_update_class == 0 {
+            tracing::info!("nothing has been done, don't send an sms");
+            continue;
         }
         if let (Some(mq_cli), Some(phone_number)) = (mq_cli, PHONE_NUMBER.clone()) {
             tracing::info!("send sms for job {}", config.title);

@@ -1,6 +1,6 @@
 [package]
 name = "s3-sync-rs"
-version = "2023.2.2"
+version = "2023.3.0"
 edition = "2021"
 
 [dependencies]
@@ -12,20 +12,20 @@ tracing-subscriber = { version = "0.3.17", features = [
 ] }
 tokio = { version = "1.29.1", features = ["rt", "macros", "rt-multi-thread"] }
 tokio-stream = { version = "0.1.14", features = ["fs"] }
-aws-sdk-s3 = "0.28.0"
-aws-config = "0.55.3"
-aws-smithy-types = "0.55.3"
-aws-smithy-http = { version = "0.55.3" }
-time = { version = "0.3.3", features = [
+aws-sdk-s3 = "0.31.2"
+aws-config = "0.56.1"
+aws-smithy-types = "0.56.1"
+aws-smithy-http = { version = "0.56.1" }
+time = { version = "0.3.29", features = [
   "formatting",
   "local-offset",
   "macros",
 ] }
-chrono = "0.4.26"
+chrono = "0.4.31"
 cron = "0.12.0"
-serde = { version = "1.0.171", features = ["derive"] }
-serde_json = "1.0.100"
-paho-mqtt = { version = "0.12.1", default-features = false, features = [
+serde = { version = "1.0.188", features = ["derive"] }
+serde_json = "1.0.107"
+paho-mqtt = { version = "0.12.2", default-features = false, features = [
   "bundled",
 ] }
 lazy_static = "1.4.0"
