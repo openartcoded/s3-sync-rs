@@ -213,7 +213,16 @@ async fn run(
                     tracing::debug!("file seems to exists, check storage class...");
                     if config.number_entry_to_keep_in_zone < 0 {
                         tracing::info!("retention policy set to keep all archives out of glacier.");
+                        update_storage_class_back_to_standard(
+                            client,
+                            &key,
+                            &storage_class,
+                            &config.bucket,
+                        )
+                        .await?;
+                        count_update_class += 1;
                     } else if number_entries_to_glacier > index {
+                        // disabled for pricing changes reason
                         update_storage_class_to_glacier(
                             client,
                             &key,
@@ -267,8 +276,8 @@ async fn run(
                         TOPIC_PUBLISHING.clone(),
                         serde_json::to_vec(&Sms {
                             message: format!(
-                                "s3 sync: job '{}' ran successfully at {}",
-                                config.title, next
+                                "s3 sync: job '{}' ran successfully at {}. files pushed: {}, classes upated: {}",
+                                config.title, next, count_pushed_files,count_update_class
                             ),
                             phone_number,
                         })?,
@@ -347,6 +356,29 @@ async fn bucket_exists(client: &Client, bucket: &str) -> Result<(), Box<dyn Erro
         }
     }
 }
+
+async fn update_storage_class_back_to_standard(
+    client: &Client,
+    key: &str,
+    old_storage_class: &StorageClass,
+    bucket: &str,
+) -> Result<(), Box<dyn Error>> {
+    if old_storage_class != &StorageClass::Standard {
+        tracing::info!("set storage class from {old_storage_class:?} to standard");
+        client
+            .copy_object()
+            .key(key)
+            .copy_source(format!("{bucket}/{key}"))
+            .storage_class(StorageClass::Standard)
+            .bucket(bucket)
+            .send()
+            .await?;
+    } else {
+        tracing::debug!("already standard. nothing to do.");
+    }
+    Ok(())
+}
+#[deprecated(note = "since scaleway changed their policy, disable this.")]
 async fn update_storage_class_to_glacier(
     client: &Client,
     key: &str,
