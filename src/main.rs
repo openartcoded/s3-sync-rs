@@ -213,7 +213,7 @@ async fn run(
                     tracing::debug!("file seems to exists, check storage class...");
                     if config.number_entry_to_keep_in_zone < 0 {
                         tracing::info!("retention policy set to keep all archives out of glacier.");
-                        update_storage_class_back_to_standard(
+                        update_storage_class_back_to_one_zone_ia(
                             client,
                             &key,
                             &storage_class,
@@ -357,19 +357,19 @@ async fn bucket_exists(client: &Client, bucket: &str) -> Result<(), Box<dyn Erro
     }
 }
 
-async fn update_storage_class_back_to_standard(
+async fn update_storage_class_back_to_one_zone_ia(
     client: &Client,
     key: &str,
     old_storage_class: &StorageClass,
     bucket: &str,
 ) -> Result<(), Box<dyn Error>> {
-    if old_storage_class != &StorageClass::Standard {
-        tracing::info!("set storage class from {old_storage_class:?} to standard");
+    if old_storage_class != &StorageClass::OnezoneIa {
+        tracing::info!("set storage class from {old_storage_class:?} to one zone ia");
         client
             .copy_object()
             .key(key)
             .copy_source(format!("{bucket}/{key}"))
-            .storage_class(StorageClass::Standard)
+            .storage_class(StorageClass::OnezoneIa)
             .bucket(bucket)
             .send()
             .await?;
