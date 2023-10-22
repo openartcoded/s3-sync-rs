@@ -36,6 +36,7 @@ lazy_static::lazy_static! {
     static ref S3_REGION: String  = var("S3_REGION").unwrap_or_else(|_| "fr-par".into());
 
     static ref PHONE_NUMBER: Option<String> =  var("PHONE_NUMBER").ok();
+    static ref DELETE_ALL: bool = var("DELETE_ALL_OBJECTS").is_ok();
 }
 
 #[derive(Serialize)]
@@ -208,6 +209,13 @@ async fn run(
                 count_entries
             );
 
+            if *DELETE_ALL {
+                tracing::warn!("DELETE_ALL_OBJECTS set to true.");
+                delete_object(client, &key, &config.bucket).await?;
+                tracing::info!("object {key} deleted.");
+                continue;
+            }
+
             match object_storage_class(client, &key, &config.bucket).await {
                 Some(storage_class) => {
                     tracing::debug!("file seems to exists, check storage class...");
@@ -336,7 +344,7 @@ async fn object_storage_class(
         }
     }
 }
-async fn _delete_object(
+async fn delete_object(
     client: &Client,
     file_name: &str,
     bucket: &str,
