@@ -213,14 +213,16 @@ async fn run(
                     tracing::debug!("file seems to exists, check storage class...");
                     if config.number_entry_to_keep_in_zone < 0 {
                         tracing::info!("retention policy set to keep all archives out of glacier.");
-                        update_storage_class_back_to_one_zone_ia(
+                        let res = update_storage_class_back_to_one_zone_ia(
                             client,
                             &key,
                             &storage_class,
                             &config.bucket,
                         )
                         .await?;
-                        count_update_class += 1;
+                        if res {
+                            count_update_class += 1;
+                        }
                     } else if number_entries_to_glacier > index {
                         // disabled for pricing changes reason
                         update_storage_class_to_glacier(
@@ -362,9 +364,18 @@ async fn update_storage_class_back_to_one_zone_ia(
     key: &str,
     old_storage_class: &StorageClass,
     bucket: &str,
-) -> Result<(), Box<dyn Error>> {
-    if old_storage_class != &StorageClass::OnezoneIa {
+) -> Result<bool, Box<dyn Error>> {
+    if old_storage_class == &StorageClass::Glacier {
         tracing::info!("set storage class from {old_storage_class:?} to one zone ia");
+        client
+            .restore_object()
+            .key(key)
+            .bucket(bucket)
+            .send()
+            .await?;
+        Ok(true)
+    } else if old_storage_class != &StorageClass::OnezoneIa {
+        tracing::info!("set class to one zone ia");
         client
             .copy_object()
             .key(key)
@@ -373,10 +384,11 @@ async fn update_storage_class_back_to_one_zone_ia(
             .bucket(bucket)
             .send()
             .await?;
+        Ok(true)
     } else {
-        tracing::debug!("already standard. nothing to do.");
+        tracing::debug!("already one zone. nothing to do.");
+        Ok(false)
     }
-    Ok(())
 }
 #[deprecated(note = "since scaleway changed their policy, disable this.")]
 async fn update_storage_class_to_glacier(
